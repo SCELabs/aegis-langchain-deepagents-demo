@@ -11,13 +11,21 @@ from benchmark_v3.cases import CASES
 from benchmark_v3.prompts import SYSTEM_PROMPT, VALIDATOR_PROMPT, build_solver_prompt
 from benchmark_v3.scoring import evaluate, parse_json
 
+
 def invoke_text(model, messages) -> str:
     response = model.invoke(messages)
     return response.content if isinstance(response.content, str) else str(response.content)
 
+
 def output_looks_good(text: str) -> bool:
     parsed = parse_json(text)
-    return isinstance(parsed, dict) and "selected_ids" in parsed and "average_score" in parsed
+    return (
+        isinstance(parsed, dict)
+        and isinstance(parsed.get("selected_ids"), list)
+        and "average_score" in parsed
+        and "rationale" in parsed
+    )
+
 
 def run(mode: str = "benchmark_v3_aegis") -> Path:
     env = load_demo_env()
@@ -42,8 +50,8 @@ def run(mode: str = "benchmark_v3_aegis") -> Path:
         )
 
         gen = plan.generation_config() or {}
-        temperature = max(0.1, min(float(gen.get("temperature", 0.3)), 0.6))
-        top_p = max(0.8, min(float(gen.get("top_p", 0.8)), 1.0))
+        temperature = max(0.1, min(float(gen.get("temperature", 0.2)), 0.4))
+        top_p = max(0.8, min(float(gen.get("top_p", 0.9)), 1.0))
 
         model = ChatOpenAI(
             model=env.model.replace("openai:", ""),
@@ -54,17 +62,28 @@ def run(mode: str = "benchmark_v3_aegis") -> Path:
 
         answer_1 = invoke_text(model, [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": solver_prompt + "\n\nReturn raw JSON only. No code fences."},
+            {
+                "role": "user",
+                "content": (
+                    solver_prompt
+                    + "\n\nReturn raw JSON only. No code fences. "
+                    + "Be exact about descending score order and average over all items."
+                ),
+            },
         ])
         total_calls += 1
 
         if output_looks_good(answer_1):
+            validator = "SKIPPED"
             final_output = answer_1
             calls = 1
         else:
             validator = invoke_text(model, [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"{VALIDATOR_PROMPT}\n\nTask:\n{solver_prompt}\n\nAnswer:\n{answer_1}"},
+                {
+                    "role": "user",
+                    "content": f"{VALIDATOR_PROMPT}\n\nTask:\n{solver_prompt}\n\nAnswer:\n{answer_1}",
+                },
             ])
             total_calls += 1
 
@@ -76,7 +95,15 @@ def run(mode: str = "benchmark_v3_aegis") -> Path:
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": solver_prompt},
                     {"role": "assistant", "content": answer_1},
-                    {"role": "user", "content": "Revise and return final JSON only. No code fences."},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Revise and return final raw JSON only. "
+                            "No code fences. No extra keys. "
+                            "selected_ids must be exactly the top 3 in descending score order. "
+                            "average_score must be computed over all items."
+                        ),
+                    },
                 ])
                 total_calls += 1
                 final_output = answer_2
@@ -88,6 +115,7 @@ def run(mode: str = "benchmark_v3_aegis") -> Path:
             "calls": calls,
             "temperature": temperature,
             "top_p": top_p,
+            "validator": validator,
             "output": final_output,
             **score,
         })
@@ -104,6 +132,7 @@ def run(mode: str = "benchmark_v3_aegis") -> Path:
 
     (run_root / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     return run_root
+
 
 if __name__ == "__main__":
     path = run()
