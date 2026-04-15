@@ -12,20 +12,27 @@ class AegisDeepAgentsAdapter:
         self.plan = self.client.auto(
             system_type="multi_agent",
             base_prompt=base_prompt,
-            symptoms=[
-                "agents_disagree",
-                "retry_loops",
-                "inefficient_execution",
-            ],
-            severity="medium",
-            metadata={"demo": "deepagents"},
+            symptoms=["inefficient_execution"],
+            severity="low",
+            metadata={"demo": "deepagents", "mode": "minimal_generation_only_v2"},
         )
 
     def apply_system_prompt(self, prompt: str) -> str:
-        return self.plan.apply_system_prompt(prompt)
+        return prompt
 
     def generation_kwargs(self) -> dict[str, Any]:
-        return dict(self.plan.generation_config() or {})
+        gen = dict(self.plan.generation_config() or {})
+
+        temperature = gen.get("temperature", 0.4)
+        top_p = gen.get("top_p", 1.0)
+
+        temperature = max(0.1, min(float(temperature), 0.4))
+        top_p = max(0.8, min(float(top_p), 1.0))
+
+        return {
+            "temperature": temperature,
+            "top_p": top_p,
+        }
 
     def raw_plan(self) -> dict[str, Any]:
         return dict(self.plan.raw)

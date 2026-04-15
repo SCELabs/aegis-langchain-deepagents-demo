@@ -6,7 +6,9 @@ from typing import Any
 
 EXPECTED_TOP3 = ["E5", "B2", "C3"]
 EXPECTED_AVERAGE = 82.83333333333333
-AVERAGE_TOLERANCE = 1e-9
+
+# Accept normal rounded presentation like 82.83
+AVERAGE_TOLERANCE = 0.01
 
 
 def load_expected_from_workspace(run_root: Path) -> dict[str, Any]:
@@ -23,14 +25,39 @@ def load_expected_from_workspace(run_root: Path) -> dict[str, Any]:
     }
 
 
+def _strip_code_fences(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        return "\n".join(lines).strip()
+    return stripped
+
+
 def parse_output_json(text: str) -> dict[str, Any] | None:
-    text = text.strip()
+    text = _strip_code_fences(text)
     if not text:
         return None
+
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        return None
+        pass
+
+    # Fallback: try extracting the first JSON object region
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = text[start : end + 1]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            return None
+
+    return None
 
 
 def evaluate_output(run_root: Path, output_text: str) -> dict[str, Any]:

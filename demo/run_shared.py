@@ -35,7 +35,7 @@ def _extract_text(result: dict[str, Any]) -> str:
     return ""
 
 
-def _count_signals(result: dict[str, Any]) -> tuple[int, int, int]:
+def _count_signals(result: Any) -> tuple[int, int, int]:
     text = str(result)
 
     model_calls = text.count("AIMessage")
@@ -103,22 +103,36 @@ def run_demo(*, mode: str, use_aegis: bool) -> Path:
         backend=backend,
     )
 
-    result = agent.invoke(
-        {"messages": [{"role": "user", "content": USER_TASK}]},
-        config={"recursion_limit": 60},
-    )
+    result: Any = None
+    output_text = ""
+    error_text = None
 
-    output_text = _extract_text(result)
+    try:
+        result = agent.invoke(
+            {"messages": [{"role": "user", "content": USER_TASK}]},
+            config={"recursion_limit": 40},
+        )
+        output_text = _extract_text(result)
+        metrics.completed = True
+    except Exception as exc:
+        error_text = f"{type(exc).__name__}: {exc}"
+        result = {"error": error_text}
+        output_text = ""
+        metrics.completed = False
+        metrics.notes.append("run_failed")
+
     output_path = run_root / "final_output.txt"
     output_path.write_text(output_text, encoding="utf-8")
 
     result_path = run_root / "raw_result.json"
     result_path.write_text(json.dumps(str(result), indent=2) + "\n", encoding="utf-8")
 
+    if error_text is not None:
+        (run_root / "error.txt").write_text(error_text + "\n", encoding="utf-8")
+
     model_calls, tool_calls, repeated_tool_signals = _count_signals(result)
     scoring = evaluate_output(run_root, output_text)
 
-    metrics.completed = True
     metrics.model_calls = model_calls
     metrics.tool_calls = tool_calls
     metrics.repeated_tool_signals = repeated_tool_signals
@@ -141,6 +155,8 @@ def run_demo(*, mode: str, use_aegis: bool) -> Path:
         metrics.notes.append("average_correct")
     if metrics.exact_match:
         metrics.notes.append("exact_match")
+    if error_text and "GraphRecursionError" in error_text:
+        metrics.notes.append("graph_recursion_error")
 
     (run_root / "scorecard.json").write_text(
         json.dumps(scoring, indent=2) + "\n",
