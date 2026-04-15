@@ -17,6 +17,15 @@ class RunMetrics:
     output_path: str = ""
     notes: list[str] = field(default_factory=list)
 
+    parsed_json: bool = False
+    selected_ids: list[str] = field(default_factory=list)
+    average_score: float | None = None
+
+    correct_top3: bool = False
+    correct_average: bool = False
+    exact_match: bool = False
+    score: float = 0.0
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 

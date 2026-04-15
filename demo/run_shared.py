@@ -9,6 +9,7 @@ from langchain_openai import ChatOpenAI
 
 from demo.env import load_demo_env
 from demo.metrics import RunMetrics
+from demo.scoring import evaluate_output
 from demo.task import SYSTEM_PROMPT, USER_TASK
 from demo.workspace import build_workspace
 
@@ -32,6 +33,20 @@ def _extract_text(result: dict[str, Any]) -> str:
         if isinstance(content, list):
             return "\n".join(str(x) for x in content)
     return ""
+
+
+def _count_signals(result: dict[str, Any]) -> tuple[int, int, int]:
+    text = str(result)
+
+    model_calls = text.count("AIMessage")
+    tool_calls = text.count("ToolMessage")
+    repeated_read_signals = 0
+
+    repeated_read_signals += max(0, text.count("read_file") - 2)
+    repeated_read_signals += max(0, text.count("items.json") - 2)
+    repeated_read_signals += max(0, text.count("brief.md") - 2)
+
+    return model_calls, tool_calls, repeated_read_signals
 
 
 def run_demo(*, mode: str, use_aegis: bool) -> Path:
@@ -100,13 +115,37 @@ def run_demo(*, mode: str, use_aegis: bool) -> Path:
     result_path = run_root / "raw_result.json"
     result_path.write_text(json.dumps(str(result), indent=2) + "\n", encoding="utf-8")
 
+    model_calls, tool_calls, repeated_tool_signals = _count_signals(result)
+    scoring = evaluate_output(run_root, output_text)
+
     metrics.completed = True
+    metrics.model_calls = model_calls
+    metrics.tool_calls = tool_calls
+    metrics.repeated_tool_signals = repeated_tool_signals
     metrics.final_output_present = bool(output_text.strip())
     metrics.output_path = str(output_path)
 
-    lowered = output_text.lower()
-    if "selected_ids" in lowered and "average_score" in lowered and "rationale" in lowered:
+    metrics.parsed_json = scoring["parsed_json"]
+    metrics.selected_ids = scoring["selected_ids"]
+    metrics.average_score = scoring["average_score"]
+    metrics.correct_top3 = scoring["correct_top3"]
+    metrics.correct_average = scoring["correct_average"]
+    metrics.exact_match = scoring["exact_match"]
+    metrics.score = scoring["score"]
+
+    if metrics.parsed_json:
         metrics.notes.append("structured_output_detected")
+    if metrics.correct_top3:
+        metrics.notes.append("top3_correct")
+    if metrics.correct_average:
+        metrics.notes.append("average_correct")
+    if metrics.exact_match:
+        metrics.notes.append("exact_match")
+
+    (run_root / "scorecard.json").write_text(
+        json.dumps(scoring, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     metrics.save(run_root / "metrics.json")
     return run_root
