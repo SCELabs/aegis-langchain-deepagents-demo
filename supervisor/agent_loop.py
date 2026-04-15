@@ -3,9 +3,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
-
-from langchain_openai import ChatOpenAI
 
 
 @dataclass
@@ -17,6 +14,9 @@ class LoopState:
     completed: bool = False
     final_output: str = ""
     notes: list[str] = field(default_factory=list)
+
+
+REQUIRED_FILES = {"/workspace/brief.md", "/workspace/items.json"}
 
 
 def _read_virtual_file(run_root: Path, rel_path: str) -> str:
@@ -41,7 +41,7 @@ def _looks_final(text: str) -> bool:
 
 def run_agent_loop(
     *,
-    model: ChatOpenAI,
+    model,
     system_prompt: str,
     user_task: str,
     run_root: Path,
@@ -63,22 +63,7 @@ def run_agent_loop(
         text = response.content if isinstance(response.content, str) else str(response.content)
         state.messages.append({"role": "assistant", "content": text})
 
-        if _looks_final(text):
-            state.completed = True
-            state.final_output = text
-            state.notes.append(f"completed_at_iteration_{iteration + 1}")
-            break
-
         requested_files = _detect_file_requests(text)
-        if not requested_files:
-            state.notes.append(f"no_file_request_iteration_{iteration + 1}")
-            state.messages.append(
-                {
-                    "role": "user",
-                    "content": "You have enough information to continue. Read the required files if needed, then return the final JSON.",
-                }
-            )
-            continue
 
         for rel_path in requested_files:
             file_read_counts[rel_path] = file_read_counts.get(rel_path, 0) + 1
@@ -93,6 +78,49 @@ def run_agent_loop(
                     "content": f"FILE CONTENT {rel_path}:\n\n{content}",
                 }
             )
+
+        read_required = REQUIRED_FILES.issubset(set(file_read_counts.keys()))
+
+        if _looks_final(text) and read_required:
+            state.completed = True
+            state.final_output = text
+            state.notes.append(f"completed_at_iteration_{iteration + 1}")
+            break
+
+        if _looks_final(text) and not read_required:
+            missing = sorted(REQUIRED_FILES.difference(set(file_read_counts.keys())))
+            state.notes.append(f"premature_final_iteration_{iteration + 1}")
+            state.messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "You answered too early. "
+                        f"You must read these files before giving the final JSON: {', '.join(missing)}."
+                    ),
+                }
+            )
+            continue
+
+        if not requested_files:
+            missing = sorted(REQUIRED_FILES.difference(set(file_read_counts.keys())))
+            if missing:
+                state.notes.append(f"no_file_request_iteration_{iteration + 1}")
+                state.messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Before answering, explicitly request and use these files: "
+                            f"{', '.join(missing)}."
+                        ),
+                    }
+                )
+            else:
+                state.messages.append(
+                    {
+                        "role": "user",
+                        "content": "You now have the required file contents. Return the final JSON answer.",
+                    }
+                )
 
     if not state.completed and not state.final_output:
         state.notes.append("max_iterations_reached")

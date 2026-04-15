@@ -11,6 +11,8 @@ from demo.scoring import evaluate_output
 from scenarios.file_selection import SYSTEM_PROMPT, USER_TASK, build_workspace
 from supervisor.aegis_supervisor import AegisLoopSupervisor
 
+REQUIRED_FILES = {"/workspace/brief.md", "/workspace/items.json"}
+
 
 def run_supervised(*, mode: str) -> Path:
     env = load_demo_env()
@@ -58,7 +60,7 @@ def run_supervised(*, mode: str) -> Path:
             top_p=decision.top_p,
         )
 
-        if decision.should_force_final_json:
+        if decision.should_force_final_json and REQUIRED_FILES.issubset(set(read_counts.keys())):
             working_messages = messages + [
                 {
                     "role": "user",
@@ -93,33 +95,6 @@ def run_supervised(*, mode: str) -> Path:
         if "items.json" in lowered:
             requested.append("/workspace/items.json")
 
-        if text.strip().startswith("{"):
-            final_output = text
-            completed = True
-            break
-
-        if text.strip().startswith("```json") or text.strip().startswith("```"):
-            final_output = text
-            completed = True
-            break
-
-        if decision.should_stop_early and iteration >= 3:
-            messages.append(
-                {
-                    "role": "user",
-                    "content": "Stop exploring. Return the final JSON answer now with no code fences.",
-                }
-            )
-
-        if not requested:
-            messages.append(
-                {
-                    "role": "user",
-                    "content": "Read the required files if needed. Then return the final JSON.",
-                }
-            )
-            continue
-
         for rel_path in requested:
             read_counts[rel_path] = read_counts.get(rel_path, 0) + 1
             if read_counts[rel_path] > 1:
@@ -133,6 +108,55 @@ def run_supervised(*, mode: str) -> Path:
                     "content": f"FILE CONTENT {rel_path}:\n\n{content}",
                 }
             )
+
+        read_required = REQUIRED_FILES.issubset(set(read_counts.keys()))
+        looks_final = text.strip().startswith("{") or text.strip().startswith("```json") or text.strip().startswith("```")
+
+        if looks_final and read_required:
+            final_output = text
+            completed = True
+            break
+
+        if looks_final and not read_required:
+            missing = sorted(REQUIRED_FILES.difference(set(read_counts.keys())))
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "You answered too early. "
+                        f"You must read these files before giving the final JSON: {', '.join(missing)}."
+                    ),
+                }
+            )
+            continue
+
+        if decision.should_stop_early and iteration >= 3 and read_required:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "Stop exploring. Return the final JSON answer now with no code fences.",
+                }
+            )
+
+        if not requested:
+            missing = sorted(REQUIRED_FILES.difference(set(read_counts.keys())))
+            if missing:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Before answering, explicitly request and use these files: "
+                            f"{', '.join(missing)}."
+                        ),
+                    }
+                )
+            else:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "You now have the required file contents. Return the final JSON.",
+                    }
+                )
 
     (run_root / "decision_log.json").write_text(
         json.dumps(decision_log, indent=2) + "\n",
