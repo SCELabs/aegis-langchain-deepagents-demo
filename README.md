@@ -112,3 +112,27 @@ This demo shows how Aegis sits **above an existing system** to:
 - improve consistency  
 
 …without changing the underlying model integration.
+Without rewriting your system.
+
+## About the Benchmark
+
+This demo is designed to reflect a common real-world pattern:
+
+Many AI workflows are built as multi-pass systems  
+(planner → solver → validator → refine)
+
+Even when the first answer is already correct, these systems often:
+- re-run validation
+- perform unnecessary refinement
+- make extra model calls by default
+
+In this benchmark:
+- the baseline represents that standard multi-pass behavior
+- Aegis supervises execution at runtime and stops early when safe
+
+Important:
+- Aegis does not improve the model’s intelligence
+- it does not change the task or inject answers
+- it only reduces unnecessary execution
+
+The goal is to measure efficiency, not raw capability.
