@@ -1,128 +1,117 @@
-## 🚀 Reduced LLM calls by 74% — no retraining, no rewrites
+# Aegis LangChain DeepAgents Demo
 
-This repo shows how a working AI workflow can be optimized at runtime.
+This demo shows how Aegis stabilizes runtime behavior in an existing LangChain/DeepAgents workflow **without changing the underlying model or redesigning the app**.
 
-* Same model
-* Same system
-* Same outputs
-
-**78 calls → 20 calls**
-**7/7 exact matches preserved**
-
-👉 Use Aegis in your own system:
-https://github.com/SCELabs/aegis-client
-
-# Aegis LangChain Runtime Optimization Demo
-
-Your AI system is already working.
-
-The problem is:
-
-* it over-executes
-* it retries unnecessarily
-* it wastes model calls
-
-Aegis fixes that at runtime.
+- Same task and prompts  
+- Same workflow shape  
+- Aegis inserted as a runtime control layer  
 
 ---
 
-## What Aegis Does
+## What this demo proves
 
-Aegis is a runtime control layer that sits on top of your AI workflow.
+Aegis is used as a **scope-first runtime SDK**:
 
-It does NOT:
+- `client.auto().llm(...)` for model-call stabilization  
+- `client.auto().step(...)` for loop/supervisor step stabilization (where applicable)  
 
-* retrain your model
-* change your architecture
-* replace your agents
-
-It DOES:
-
-* reduce unnecessary execution
-* stabilize outputs
-* tighten behavior across runs
+This repository **does not use the legacy plan-first mental model**.
 
 ---
 
-## Benchmark
+## Aegis SDK surface used
 
-We tested a working multi-pass workflow across 20 cases.
+```python
+from aegis import AegisClient, AegisConfig
+import os
 
-Each case:
+client = AegisClient(
+    api_key=os.environ["AEGIS_API_KEY"],
+    base_url=os.getenv("AEGIS_BASE_URL"),
+    config=AegisConfig(mode="balanced"),
+)
 
-* selects top 3 items by score
-* computes average score
-* returns structured JSON
+result = client.auto().llm(...)
+```
 
-The system already works.
+Returned `AegisResult` values are inspected in the demo outputs, including:
 
-Aegis only optimizes runtime behavior.
-
----
-
-## Results
-
-Baseline
-
-* Cases: 20
-* Exact matches: 7
-* Total model calls: 78
-* Avg model calls: 3.9
-
-With Aegis
-
-* Cases: 20
-* Exact matches: 7
-* Total model calls: 20
-* Avg model calls: 1.0
+- `actions`
+- `trace`
+- `metrics`
+- `used_fallback`
+- `explanation`
+- `scope`
+- `scope_data`
 
 ---
 
-## Net Effect
+## Environment
 
-* Exact matches preserved: 7 → 7
-* Model calls reduced: 78 → 20
-* Call reduction: 58
-* Reduction: ~74%
+### Required
 
-Same system. Same model. Same results.
+- `OPENAI_API_KEY`
+- `AEGIS_API_KEY`
 
-Less waste.
+### Optional
 
----
+- `AEGIS_BASE_URL` (set explicitly if not using default endpoint)
+- `DEMO_MODEL` (default: `openai:gpt-4o-mini`)
 
-## Key Insight
+### Example `.env`
 
-Aegis does not make your system smarter.
-
-It makes your system:
-
-* more efficient
-* more consistent
-* more controlled
-
-It works best on systems that already function, but need optimization.
+```env
+OPENAI_API_KEY=...
+AEGIS_API_KEY=...
+AEGIS_BASE_URL=http://localhost:8080
+DEMO_MODEL=openai:gpt-4o-mini
+```
 
 ---
 
-## Run the Demo
+## Run
 
+```bash
 python -m benchmark_v3.run_baseline
 python -m benchmark_v3.run_aegis
 python -m runners.compare_benchmark_v3
+```
+
+### Other runnable variants
+
+```bash
+python -m runners.run_aegis
+python -m runners.run_working_aegis
+python -m runners.run_v2_aegis
+python -m runners.run_aegis_supervisor
+```
 
 ---
 
-## Takeaway
+## What to inspect in outputs
 
-If your AI workflow already works but:
+Aegis runs emit:
 
-* calls the model too many times
-* re-validates unnecessarily
-* drifts or over-thinks
+- `aegis_result*.json` files (replacing old plan artifacts)
+- optional `aegis_debug_summary.txt`
 
-Aegis can reduce that at runtime.
+Inspect:
 
+- `actions` → applied runtime controls  
+- `used_fallback` → whether fallback behavior was triggered  
+- `trace` / `metrics` → decision and execution context  
+
+---
+
+## Key takeaway
+
+This demo shows how Aegis sits **above an existing system** to:
+
+- reduce waste  
+- stabilize behavior  
+- improve consistency  
+
+…without changing the underlying model integration.
 Without rewriting your system.
 
 ## About the Benchmark

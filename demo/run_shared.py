@@ -85,10 +85,16 @@ def run_demo(*, mode: str, use_aegis: bool) -> Path:
         )
         system_prompt = adapter.apply_system_prompt(SYSTEM_PROMPT)
         extra_model_kwargs = adapter.generation_kwargs()
-        (run_root / "aegis_plan.json").write_text(
-            json.dumps(adapter.raw_plan(), indent=2) + "\n",
+        (run_root / "aegis_result.json").write_text(
+            json.dumps(adapter.raw_result(), indent=2) + "\n",
             encoding="utf-8",
         )
+        debug_summary = getattr(adapter.result, "debug_summary", None)
+        if callable(debug_summary):
+            (run_root / "aegis_debug_summary.txt").write_text(
+                str(debug_summary()) + "\n",
+                encoding="utf-8",
+            )
 
     model = ChatOpenAI(
         model=env.model.replace("openai:", ""),

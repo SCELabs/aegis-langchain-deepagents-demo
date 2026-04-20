@@ -5,11 +5,34 @@ from pathlib import Path
 
 from langchain_openai import ChatOpenAI
 
-from aegis import AegisClient
+from aegis import AegisClient, AegisConfig
 from demo.env import load_demo_env
 from demo.scoring import evaluate_output
 from working_demo.task_data import BRIEF, ITEMS
 from working_demo_v2.prompts import SYSTEM_PROMPT, build_user_prompt
+
+
+def _generation_hints(result) -> dict:
+    scope_data = getattr(result, "scope_data", None)
+    if isinstance(scope_data, dict):
+        for key in ("generation", "generation_config", "model_config", "params"):
+            value = scope_data.get(key)
+            if isinstance(value, dict):
+                return value
+        return scope_data
+    return {}
+
+
+def _serialize_result(result) -> dict:
+    return {
+        "scope": getattr(result, "scope", None),
+        "scope_data": getattr(result, "scope_data", None),
+        "actions": getattr(result, "actions", None),
+        "trace": getattr(result, "trace", None),
+        "metrics": getattr(result, "metrics", None),
+        "used_fallback": getattr(result, "used_fallback", None),
+        "explanation": getattr(result, "explanation", None),
+    }
 
 
 def run_aegis(mode: str = "v2_aegis") -> Path:
@@ -24,16 +47,19 @@ def run_aegis(mode: str = "v2_aegis") -> Path:
     items_text = json.dumps(ITEMS, indent=2)
     user_prompt = build_user_prompt(BRIEF, items_text)
 
-    client = AegisClient(api_key=env.aegis_api_key, base_url=env.aegis_base_url)
+    client = AegisClient(
+        api_key=env.aegis_api_key,
+        base_url=env.aegis_base_url,
+        config=AegisConfig(mode="balanced"),
+    )
 
-    plan = client.auto(
-        system_type="single_agent",
+    result = client.auto().llm(
         base_prompt=SYSTEM_PROMPT,
         symptoms=["inefficient_execution"],
         severity="medium",
     )
 
-    gen = plan.generation_config() or {}
+    gen = _generation_hints(result)
 
     model = ChatOpenAI(
         model=env.model.replace("openai:", ""),
@@ -41,7 +67,6 @@ def run_aegis(mode: str = "v2_aegis") -> Path:
         temperature=gen.get("temperature", 0.3),
     )
 
-    # Aegis version: only ONE pass
     response = model.invoke([
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt + "\n\nReturn final answer in one pass. No re-check loop."},
@@ -50,7 +75,11 @@ def run_aegis(mode: str = "v2_aegis") -> Path:
     output = response.content if isinstance(response.content, str) else str(response.content)
 
     (run_root / "final_output.txt").write_text(output, encoding="utf-8")
-    (run_root / "aegis_plan.json").write_text(json.dumps(plan.raw, indent=2))
+    (run_root / "aegis_result.json").write_text(json.dumps(_serialize_result(result), indent=2))
+
+    debug_summary = getattr(result, "debug_summary", None)
+    if callable(debug_summary):
+        (run_root / "aegis_debug_summary.txt").write_text(str(debug_summary()) + "\n", encoding="utf-8")
 
     workspace = run_root / "workspace"
     workspace.mkdir(exist_ok=True)
@@ -66,6 +95,8 @@ def run_aegis(mode: str = "v2_aegis") -> Path:
         "correct_average": scoring["correct_average"],
         "exact_match": scoring["exact_match"],
         "score": scoring["score"],
+        "aegis_scope": getattr(result, "scope", None),
+        "aegis_used_fallback": getattr(result, "used_fallback", None),
     }
 
     (run_root / "metrics.json").write_text(json.dumps(metrics, indent=2))
