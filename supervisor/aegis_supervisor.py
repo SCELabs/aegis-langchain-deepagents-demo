@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from aegis import AegisClient
+from aegis import AegisClient, AegisConfig, AegisResult
 
 
 @dataclass
@@ -17,8 +17,23 @@ class SupervisorDecision:
 
 class AegisLoopSupervisor:
     def __init__(self, *, base_prompt: str, api_key: str | None, base_url: str | None) -> None:
-        self.client = AegisClient(api_key=api_key, base_url=base_url) if (api_key or base_url) else AegisClient()
+        self.client = (
+            AegisClient(api_key=api_key, base_url=base_url, config=AegisConfig(mode="balanced"))
+            if (api_key or base_url)
+            else AegisClient(config=AegisConfig(mode="balanced"))
+        )
         self.base_prompt = base_prompt
+
+    @staticmethod
+    def _generation_hints(result: AegisResult) -> dict[str, Any]:
+        scope_data = getattr(result, "scope_data", None)
+        if isinstance(scope_data, dict):
+            for key in ("generation", "generation_config", "model_config", "params"):
+                value = scope_data.get(key)
+                if isinstance(value, dict):
+                    return value
+            return scope_data
+        return {}
 
     def decide(
         self,
@@ -47,8 +62,8 @@ class AegisLoopSupervisor:
                 notes=["no_intervention"],
             )
 
-        plan = self.client.auto(
-            system_type="multi_agent",
+        result = self.client.auto().step(
+            step_name="agent_loop_iteration",
             base_prompt=self.base_prompt,
             symptoms=symptoms,
             severity="low",
@@ -61,14 +76,14 @@ class AegisLoopSupervisor:
             },
         )
 
-        gen = dict(plan.generation_config() or {})
+        gen = dict(self._generation_hints(result))
         temperature = max(0.1, min(float(gen.get("temperature", 0.4)), 0.7))
         top_p = max(0.8, min(float(gen.get("top_p", 1.0)), 1.0))
 
         should_stop_early = repeated_reads >= 2 or model_calls >= 4
         should_force_final_json = repeated_reads > 0 or "```" in last_output
 
-        notes = [f"symptoms={','.join(symptoms)}"]
+        notes = [f"symptoms={','.join(symptoms)}", f"used_fallback={getattr(result, 'used_fallback', False)}"]
 
         return SupervisorDecision(
             temperature=temperature,
